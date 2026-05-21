@@ -53,9 +53,9 @@ export async function syncNotes(
     }
   }
   const userTags = Object.entries(tagCounts)
-    .sort((a, b) => b[1] - a[1])
+    .sort((a: [string, number], b: [string, number]) => b[1] - a[1])
     .slice(0, 50)
-    .map(([tag]) => tag);
+    .map(([tag]: [string, number]) => tag);
 
   // Pull from server
   let data: PullResponse;
@@ -99,14 +99,18 @@ export async function syncNotes(
 
 async function writeNote(app: App, targetFile: string, content: string): Promise<void> {
   const vault = app.vault;
-  const existing = vault.getAbstractFileByPath(targetFile);
+  const isInbox = targetFile.startsWith("_pipinbox/");
 
-  if (existing instanceof TFile) {
-    await vault.append(existing, "\n" + content);
-    return;
+  if (!isInbox) {
+    // Routed note — append to existing project file with separator
+    const existing = vault.getAbstractFileByPath(targetFile);
+    if (existing instanceof TFile) {
+      await vault.append(existing, "\n\n---\n\n" + content);
+      return;
+    }
   }
 
-  // Create the file (and parent folders if needed)
+  // Inbox note (or routed file doesn't exist yet) — create individual file
   try {
     const parts = targetFile.split("/");
     if (parts.length > 1) {
@@ -117,12 +121,19 @@ async function writeNote(app: App, targetFile: string, content: string): Promise
     }
     await vault.create(targetFile, content);
   } catch {
-    // Fallback to Pip-Inbox.md
-    const inbox = vault.getAbstractFileByPath("Pip-Inbox.md");
-    if (inbox instanceof TFile) {
-      await vault.append(inbox, "\n" + content);
+    // Fallback
+    const fallback = vault.getAbstractFileByPath("_pipinbox/fallback.md");
+    if (fallback instanceof TFile) {
+      await vault.append(fallback, "\n\n---\n\n" + content);
     } else {
-      await vault.create("Pip-Inbox.md", content);
+      try {
+        if (!vault.getAbstractFileByPath("_pipinbox")) {
+          await vault.createFolder("_pipinbox");
+        }
+        await vault.create("_pipinbox/fallback.md", content);
+      } catch {
+        // silent — best effort
+      }
     }
   }
 }

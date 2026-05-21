@@ -15,8 +15,8 @@ export default class PipPlugin extends Plugin {
     // Foreground resume
     document.addEventListener("visibilitychange", this.onVisibilityChange);
 
-    // Background interval — 60s
-    this.registerInterval(window.setInterval(() => this.sync(), 60_000));
+    // Background interval — 15s
+    this.registerInterval(window.setInterval(() => this.sync(), 15_000));
   }
 
   onunload() {
