@@ -1,10 +1,15 @@
-import { App, TFile } from "obsidian";
+import { App, requestUrl, TFile } from "obsidian";
 import { getDeviceId } from "./settings";
 
 interface Note {
   id: string;
+  type?: string;
   target_file: string;
-  content: string;
+  content?: string;
+  patch_tags?: string[];
+  patch_links?: string[];
+  media_urls?: string[];
+  media_filenames?: string[];
 }
 
 interface PullResponse {
@@ -25,6 +30,55 @@ function addSeenNotes(ids: string[]): void {
   const trimmed = Array.from(seen).slice(-MAX_SEEN);
   localStorage.setItem(SEEN_NOTES_KEY, JSON.stringify(trimmed));
 }
+
+async function downloadMedia(
+  mediaUrl: string,
+  filename: string,
+  app: App,
+): Promise<void> {
+  try {
+    const resp = await requestUrl({ url: mediaUrl });
+    const attachmentsFolder = "Attachments";
+    if (!app.vault.getAbstractFileByPath(attachmentsFolder)) {
+      await app.vault.createFolder(attachmentsFolder);
+    }
+    const destPath = `${attachmentsFolder}/${filename}`;
+    if (!app.vault.getAbstractFileByPath(destPath)) {
+      await app.vault.createBinary(destPath, resp.arrayBuffer);
+    }
+  } catch {
+    // Media download failure is non-fatal — note still writes
+  }
+}
+
+async function patchNote(app: App, targetFile: string, patchTags: string[], patchLinks: string[]): Promise<void> {
+  const file = app.vault.getAbstractFileByPath(targetFile);
+  if (!(file instanceof TFile)) {
+    console.error("[Pip] patchNote: file not found in vault:", targetFile);
+    return;
+  }
+  try {
+    let content = await app.vault.read(file);
+
+    // Replace tags line — match from "tags:" to end of the line
+    content = content.replace(/^tags:.*$/m, `tags: [${patchTags.join(", ")}]`);
+
+    // Replace or insert links line
+    const linksValue = patchLinks.map(l => `"${l}"`).join(", ");
+    if (/^links:/m.test(content)) {
+      content = patchLinks.length > 0
+        ? content.replace(/^links:.*$/m, `links: [${linksValue}]`)
+        : content.replace(/^links:.*\n?/m, "");
+    } else if (patchLinks.length > 0 && content.startsWith("---\n")) {
+      content = content.replace(/^(date: [^\n]+\n)/m, `$1links: [${linksValue}]\n`);
+    }
+
+    await app.vault.modify(file, content);
+  } catch (err) {
+    console.error("[Pip] patchNote failed:", err, { targetFile, patchTags, patchLinks });
+  }
+}
+
 
 export async function syncNotes(
   app: App,
@@ -61,10 +115,13 @@ export async function syncNotes(
   let data: PullResponse;
   try {
     const resp = await fetch(
-      `${serverUrl}/pull?token=${encodeURIComponent(pin)}`,
+      `${serverUrl}/pull`,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${pin}`,
+        },
         body: JSON.stringify({ vault_index: files, user_tags: userTags, device_id: deviceId }),
       }
     );
@@ -82,16 +139,30 @@ export async function syncNotes(
   for (const note of data.notes) {
     if (seen.has(note.id)) continue;
 
-    await writeNote(app, note.target_file, note.content);
+    if (note.type === "patch") {
+      await patchNote(app, note.target_file, note.patch_tags ?? [], note.patch_links ?? []);
+      newIds.push(note.id);
+      continue;
+    }
+
+    if (note.media_urls && note.media_filenames) {
+      for (let i = 0; i < note.media_urls.length; i++) {
+        await downloadMedia(note.media_urls[i], note.media_filenames[i], app);
+      }
+    }
+
+    await writeNote(app, note.target_file, note.content ?? "");
     newIds.push(note.id);
   }
 
   if (newIds.length > 0) {
     addSeenNotes(newIds);
-    // Confirm delivery
-    fetch(`${serverUrl}/confirm?token=${encodeURIComponent(pin)}`, {
+    fetch(`${serverUrl}/confirm`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${pin}`,
+      },
       body: JSON.stringify({ note_ids: newIds }),
     }).catch(() => {});
   }
@@ -99,41 +170,19 @@ export async function syncNotes(
 
 async function writeNote(app: App, targetFile: string, content: string): Promise<void> {
   const vault = app.vault;
-  const isInbox = targetFile.startsWith("_pipinbox/");
 
-  if (!isInbox) {
-    // Routed note — append to existing project file with separator
-    const existing = vault.getAbstractFileByPath(targetFile);
-    if (existing instanceof TFile) {
-      await vault.append(existing, "\n\n---\n\n" + content);
-      return;
-    }
+  if (!vault.getAbstractFileByPath("_pipinbox")) {
+    await vault.createFolder("_pipinbox");
   }
 
-  // Inbox note (or routed file doesn't exist yet) — create individual file
-  try {
-    const parts = targetFile.split("/");
-    if (parts.length > 1) {
-      const dir = parts.slice(0, -1).join("/");
-      if (!vault.getAbstractFileByPath(dir)) {
-        await vault.createFolder(dir);
-      }
-    }
-    await vault.create(targetFile, content);
-  } catch {
-    // Fallback
-    const fallback = vault.getAbstractFileByPath("_pipinbox/fallback.md");
-    if (fallback instanceof TFile) {
-      await vault.append(fallback, "\n\n---\n\n" + content);
-    } else {
-      try {
-        if (!vault.getAbstractFileByPath("_pipinbox")) {
-          await vault.createFolder("_pipinbox");
-        }
-        await vault.create("_pipinbox/fallback.md", content);
-      } catch {
-        // silent — best effort
-      }
+  const base = targetFile.endsWith(".md") ? targetFile.slice(0, -3) : targetFile;
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    const path = attempt === 1 ? targetFile : `${base} ${attempt}.md`;
+    try {
+      await vault.create(path, content);
+      return;
+    } catch {
+      // file exists — try next suffix
     }
   }
 }
