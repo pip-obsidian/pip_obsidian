@@ -60,8 +60,8 @@ async function patchNote(app: App, targetFile: string, patchTags: string[], patc
   try {
     let content = await app.vault.read(file);
 
-    // Replace tags line — match from "tags:" to end of the line
-    content = content.replace(/^tags:.*$/m, `tags: [${patchTags.join(", ")}]`);
+    // Replace tags line — handles both inline (tags: [a, b]) and block sequence (tags:\n  - a)
+    content = content.replace(/^tags:.*$(\n[ \t]+-[^\n]*)*/m, `tags: [${patchTags.join(", ")}]`);
 
     // Replace or insert links line
     const linksValue = patchLinks.map(l => `"${l}"`).join(", ");
