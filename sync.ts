@@ -96,13 +96,23 @@ export async function syncNotes(
     .slice(0, 500)
     .map((f: TFile) => f.path);
 
-  // Build user tags: top 50 by frequency
+  // Build user tags: top 50 by frequency (inline #hashtags + YAML frontmatter tags)
   const tagCounts: Record<string, number> = {};
   for (const file of vault.getMarkdownFiles().slice(0, 200)) {
     const content = await vault.cachedRead(file);
-    const matches = content.match(/#([\w-]+)/g) || [];
-    for (const tag of matches) {
-      const t = tag.slice(1);
+    const inlineTags = (content.match(/#([\w-]+)/g) || []).map((t: string) => t.slice(1));
+    // YAML inline array: tags: [concept, ai]
+    const fmInlineMatch = content.match(/^tags:\s*\[([^\]]+)\]/m);
+    const fmInlineTags = fmInlineMatch
+      ? fmInlineMatch[1].split(",").map((t: string) => t.trim().replace(/^["']|["']$/g, "")).filter(Boolean)
+      : [];
+    // YAML block sequence: tags:\n  - concept
+    const fmBlockMatch = content.match(/^tags:\s*\n((?:[ \t]+-[^\n]+\n?)+)/m);
+    const fmBlockTags = fmBlockMatch
+      ? (fmBlockMatch[1].match(/(?:^|\n)[ \t]+-[ \t]*(.+)/g) || []).map((m: string) => m.replace(/^[\s\-]+/, "").trim()).filter(Boolean)
+      : [];
+    const allTags = [...inlineTags, ...fmInlineTags, ...fmBlockTags];
+    for (const t of allTags) {
       tagCounts[t] = (tagCounts[t] || 0) + 1;
     }
   }
