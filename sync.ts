@@ -63,12 +63,12 @@ async function patchNote(app: App, targetFile: string, patchTags: string[], patc
     // Replace tags line — handles both inline (tags: [a, b]) and block sequence (tags:\n  - a)
     content = content.replace(/^tags:.*$(\n[ \t]+-[^\n]*)*/m, `tags: [${patchTags.join(", ")}]`);
 
-    // Replace or insert links line
+    // Replace or insert links line — handles both inline and block-sequence YAML
     const linksValue = patchLinks.map(l => `"${l}"`).join(", ");
     if (/^links:/m.test(content)) {
       content = patchLinks.length > 0
-        ? content.replace(/^links:.*$/m, `links: [${linksValue}]`)
-        : content.replace(/^links:.*\n?/m, "");
+        ? content.replace(/^links:.*$(\n[ \t]+-[^\n]*)*/m, `links: [${linksValue}]`)
+        : content.replace(/^links:.*$(\n[ \t]+-[^\n]*)*/m, "");
     } else if (patchLinks.length > 0 && content.startsWith("---\n")) {
       content = content.replace(/^(date: [^\n]+\n)/m, `$1links: [${linksValue}]\n`);
     }
