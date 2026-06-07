@@ -1,6 +1,6 @@
 {
   "name": "pip-obsidian",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Capture notes via Telegram. Delivered to your vault.",
   "main": "main.js",
   "scripts": {

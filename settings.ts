@@ -80,7 +80,7 @@ export class PipSettingTab extends PluginSettingTab {
       info.innerHTML = `
         <strong style="color:var(--text-normal);display:block;margin-bottom:6px;">Connect your vault</strong>
         Tap <strong>Connect to Pip</strong> below — it opens Telegram, you tap <code>Start</code>, and you're linked. No codes to type.<br>
-        Telegram didn't open? Send <code>/connect</code> to <a href="https://t.me/pip_obsidian_bot">@pip_obsidian_bot</a> and paste the code it gives you.
+        Telegram didn't open? Send <code>/connect</code> to <a href="https://t.me/pipforobsidian_bot">@pipforobsidian_bot</a> and paste the code it gives you.
       `;
 
       // Path 1 — Connect button
