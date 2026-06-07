@@ -82,10 +82,10 @@ async function patchNote(app: App, targetFile: string, patchTags: string[], patc
 
 export async function syncNotes(
   app: App,
-  pin: string,
+  token: string,
   serverUrl: string
 ): Promise<void> {
-  if (!pin) return;
+  if (!token) return;
 
   const deviceId = getDeviceId();
   const vault = app.vault;
@@ -130,7 +130,7 @@ export async function syncNotes(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${pin}`,
+          "Authorization": `Bearer ${token}`,
         },
         body: JSON.stringify({ vault_index: files, user_tags: userTags, device_id: deviceId }),
       }
@@ -171,7 +171,7 @@ export async function syncNotes(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${pin}`,
+        "Authorization": `Bearer ${token}`,
       },
       body: JSON.stringify({ note_ids: newIds }),
     }).catch(() => {});

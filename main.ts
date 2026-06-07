@@ -28,7 +28,7 @@ export default class PipPlugin extends Plugin {
   };
 
   private sync() {
-    syncNotes(this.app, this.settings.pin, this.settings.serverUrl);
+    syncNotes(this.app, this.settings.vaultToken, this.settings.serverUrl);
   }
 
   async loadSettings() {
