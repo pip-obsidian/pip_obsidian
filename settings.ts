@@ -200,6 +200,9 @@ export class PipSettingTab extends PluginSettingTab {
     const token = this.plugin.settings.vaultToken;
     let status: {
       enabled: boolean;
+      eligible: boolean;
+      tier: string;
+      price: string;
       providers: { id: string; label: string; available: boolean }[];
       has_key: boolean;
       provider: string | null;
@@ -224,10 +227,43 @@ export class PipSettingTab extends PluginSettingTab {
     head.style.cssText = "margin-top:24px;margin-bottom:4px;";
     const desc = el.createDiv();
     desc.style.cssText =
-      "background:var(--background-secondary);border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:0.88em;line-height:1.6;color:var(--text-muted);";
+      "background:var(--background-secondary);border-radius:8px;padding:12px 16px;margin-bottom:10px;font-size:0.88em;line-height:1.6;color:var(--text-muted);";
     desc.innerHTML =
-      "Use your own AI provider key. Only you pay for AI usage, and your notes are processed through your own account. " +
-      "Your key is sent securely and stored encrypted — Pip never displays it again.";
+      "Use your own AI provider key. Only you pay for AI usage, and your notes are processed through your own account.";
+
+    // Encryption reassurance — shown in both states.
+    const sec = el.createDiv();
+    sec.style.cssText = "margin-bottom:14px;font-size:0.82em;line-height:1.5;color:var(--text-muted);";
+    sec.innerHTML =
+      "🔒 Your key is sent over HTTPS, <strong>encrypted at rest with AES‑128 (Fernet)</strong>, never written to disk in plaintext, and never displayed again.";
+
+    // Not on the BYOK plan → upgrade prompt (no key form).
+    if (!status.eligible) {
+      const up = new Setting(el)
+        .setName(`Upgrade to BYOK — ${status.price || "$30/yr"}`)
+        .setDesc("Unlock bring‑your‑own‑key. You can also upgrade in Telegram with /upgrade.");
+      const upStatus = up.descEl.createDiv();
+      upStatus.style.cssText = "margin-top:6px;font-size:0.85em;color:var(--text-muted);";
+      up.addButton((btn) =>
+        btn
+          .setButtonText("Upgrade")
+          .setCta()
+          .onClick(async () => {
+            btn.setDisabled(true);
+            upStatus.setText("Opening checkout…");
+            const url = await this.byokCheckoutUrl();
+            if (url) {
+              window.open(url, "_blank");
+              upStatus.setText("Complete checkout in your browser, then reopen settings.");
+            } else {
+              upStatus.style.color = "var(--text-error)";
+              upStatus.setText("Couldn't start checkout — try /upgrade in Telegram.");
+              btn.setDisabled(false);
+            }
+          })
+      );
+      return;
+    }
 
     const providers = status.providers || [];
     let selectedProvider = status.provider || "gemini";
@@ -336,6 +372,22 @@ export class PipSettingTab extends PluginSettingTab {
       });
     } catch {
       // best-effort; UI re-renders from server state on next display()
+    }
+  }
+
+  private async byokCheckoutUrl(): Promise<string | null> {
+    const base = this.plugin.settings.serverUrl;
+    try {
+      const resp = await requestUrl({
+        url: `${base}/settings/byok/checkout`,
+        method: "POST",
+        headers: { Authorization: `Bearer ${this.plugin.settings.vaultToken}` },
+        throw: false,
+      });
+      if (resp.status !== 200) return null;
+      return (resp.json as { url: string }).url || null;
+    } catch {
+      return null;
     }
   }
 
