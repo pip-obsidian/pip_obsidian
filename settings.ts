@@ -72,6 +72,11 @@ export class PipSettingTab extends PluginSettingTab {
             this.display();
           })
         );
+
+      // BYOK section — rendered async; stays hidden unless the server reports
+      // the feature enabled (GET /settings/byok → {enabled:true}).
+      const byokEl = containerEl.createDiv();
+      void this.renderByok(byokEl);
     } else {
       // Instructions
       const info = containerEl.createDiv();
@@ -183,6 +188,155 @@ export class PipSettingTab extends PluginSettingTab {
         // transient network error — keep polling until the deadline
       }
     }, 2000);
+  }
+
+  /**
+   * BYOK section. Fetches feature status from the server; renders nothing if the
+   * feature is disabled. The key is write-only — it's sent to the server and
+   * never stored in plugin settings or shown again (only a masked "key set ✓").
+   */
+  private async renderByok(el: HTMLElement): Promise<void> {
+    const base = this.plugin.settings.serverUrl;
+    const token = this.plugin.settings.vaultToken;
+    let status: {
+      enabled: boolean;
+      providers: { id: string; label: string; available: boolean }[];
+      has_key: boolean;
+      provider: string | null;
+      last_error: string | null;
+    };
+    try {
+      const resp = await requestUrl({
+        url: `${base}/settings/byok`,
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+        throw: false,
+      });
+      if (resp.status !== 200) return;
+      status = resp.json;
+    } catch {
+      return;
+    }
+    if (!status?.enabled) return; // feature off → no UI
+
+    el.empty();
+    const head = el.createEl("h3", { text: "Bring your own API key" });
+    head.style.cssText = "margin-top:24px;margin-bottom:4px;";
+    const desc = el.createDiv();
+    desc.style.cssText =
+      "background:var(--background-secondary);border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:0.88em;line-height:1.6;color:var(--text-muted);";
+    desc.innerHTML =
+      "Use your own AI provider key. Only you pay for AI usage, and your notes are processed through your own account. " +
+      "Your key is sent securely and stored encrypted — Pip never displays it again.";
+
+    const providers = status.providers || [];
+    let selectedProvider = status.provider || "gemini";
+    let keyValue = "";
+
+    new Setting(el).setName("AI provider").addDropdown((dd) => {
+      for (const p of providers) {
+        dd.addOption(p.id, p.available ? p.label : `${p.label} (coming soon)`);
+      }
+      dd.setValue(selectedProvider);
+      dd.onChange((v) => {
+        selectedProvider = v;
+      });
+    });
+
+    const keySetting = new Setting(el)
+      .setName("API key")
+      .setDesc(status.has_key ? "A key is set. Paste a new one to replace it." : "Paste your key, then Save.");
+    keySetting.addText((t) => {
+      t.inputEl.type = "password";
+      t.setPlaceholder(status.has_key ? "•••••••• (key set)" : "paste your key");
+      t.onChange((v) => {
+        keyValue = v.trim();
+      });
+    });
+    const statusLine = keySetting.descEl.createDiv();
+    statusLine.style.cssText = "margin-top:6px;font-size:0.85em;";
+    if (status.has_key) {
+      statusLine.style.color = "var(--color-green)";
+      statusLine.setText(`Key set ✓${status.provider ? ` (${status.provider})` : ""}`);
+    } else if (status.last_error) {
+      statusLine.style.color = "var(--text-error)";
+      statusLine.setText("Last key was rejected. Paste a valid key and Save.");
+    }
+    keySetting.addButton((btn) =>
+      btn
+        .setButtonText("Save")
+        .setCta()
+        .onClick(async () => {
+          if (!keyValue) {
+            statusLine.style.color = "var(--text-error)";
+            statusLine.setText("Paste a key first.");
+            return;
+          }
+          const avail = providers.find((p) => p.id === selectedProvider)?.available;
+          if (!avail) {
+            statusLine.style.color = "var(--text-error)";
+            statusLine.setText("That provider is coming soon.");
+            return;
+          }
+          btn.setDisabled(true);
+          statusLine.style.color = "var(--text-muted)";
+          statusLine.setText("Validating…");
+          const ok = await this.saveByok(selectedProvider, keyValue);
+          keyValue = ""; // never retain plaintext in the plugin
+          if (ok) {
+            this.display();
+          } else {
+            statusLine.style.color = "var(--text-error)";
+            statusLine.setText("Key rejected — check it and try again.");
+            btn.setDisabled(false);
+          }
+        })
+    );
+
+    if (status.has_key) {
+      new Setting(el)
+        .setName("Remove key")
+        .setDesc("Stop using your own key.")
+        .addButton((b) =>
+          b.setButtonText("Remove").setWarning().onClick(async () => {
+            await this.clearByok();
+            this.display();
+          })
+        );
+    }
+  }
+
+  private async saveByok(provider: string, key: string): Promise<boolean> {
+    const base = this.plugin.settings.serverUrl;
+    try {
+      const resp = await requestUrl({
+        url: `${base}/settings/byok`,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.plugin.settings.vaultToken}`,
+        },
+        body: JSON.stringify({ provider, key }),
+        throw: false,
+      });
+      return resp.status === 200;
+    } catch {
+      return false;
+    }
+  }
+
+  private async clearByok(): Promise<void> {
+    const base = this.plugin.settings.serverUrl;
+    try {
+      await requestUrl({
+        url: `${base}/settings/byok`,
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${this.plugin.settings.vaultToken}` },
+        throw: false,
+      });
+    } catch {
+      // best-effort; UI re-renders from server state on next display()
+    }
   }
 
   /** Path 2: redeem a manual paste code for the vault token. */
